@@ -3,6 +3,7 @@ package subpub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -189,12 +190,17 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 		return errors.New("subject cannot be empty")
 	}
 
-	//For work with map without data race
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 	if sp.closed {
 		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
+	}
+
+	_, exist := sp.subscribers[subject]
+	if !exist {
+		sp.logger.Errorf("Publish failed: subpub doesn`t have subject: %s", subject)
+		return fmt.Errorf("Publish failed: subpub doesn`t have subject: %s", subject)
 	}
 
 	// Send message to centralized queue
