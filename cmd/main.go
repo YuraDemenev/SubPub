@@ -35,7 +35,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// Close with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
 	if err := sp.Close(ctx); err != nil {
 		fmt.Println("Close error:", err)
