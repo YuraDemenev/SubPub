@@ -3,8 +3,9 @@ package subpub
 import (
 	"context"
 	"errors"
-	"log"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 // MessageHandler is a callback function that processes messages delivered to subscribers
@@ -34,7 +35,7 @@ type subPub struct {
 	//Bool flag for check is subPub close
 	closed bool
 	wg     sync.WaitGroup
-	logger *log.Logger
+	logger *logrus.Logger
 }
 
 type subscription struct {
@@ -58,7 +59,7 @@ func NewSubPub() SubPub {
 		subscribers: make(map[string]map[*subscription]struct{}),
 		msgCh:       make(chan message, 1000),
 		stopCh:      make(chan struct{}),
-		logger:      log.New(log.Writer(), "subPub: ", log.LstdFlags),
+		logger:      initLogger(),
 	}
 
 	//Create workers pool
@@ -71,7 +72,7 @@ func NewSubPub() SubPub {
 				select {
 				case msg, ok := <-sp.msgCh:
 					if !ok {
-						sp.logger.Printf("[INFO] Worker %d: Message channel closed", id)
+						sp.logger.Infof("Worker %d: Message channel closed", id)
 						return
 					}
 					//For read map with sunjects
@@ -81,7 +82,7 @@ func NewSubPub() SubPub {
 					sp.mu.RUnlock()
 
 					if !exist {
-						sp.logger.Printf("[WARN] Worker %d: subject %s is not exist", id, msg.subject)
+						sp.logger.Warnf("Worker %d: subject %s is not exist", id, msg.subject)
 						return
 					}
 
@@ -90,7 +91,7 @@ func NewSubPub() SubPub {
 						sub.mu.RLock()
 						if sub.closed {
 							sub.mu.RUnlock()
-							sp.logger.Printf("[INFO] Worker %d: Subscriber for subject %s is closed", id, msg.subject)
+							sp.logger.Infof("Worker %d: Subscriber for subject %s is closed", id, msg.subject)
 							continue
 						}
 
@@ -101,25 +102,25 @@ func NewSubPub() SubPub {
 					}
 
 				case <-sp.stopCh:
-					sp.logger.Printf("[INFO] Worker %d is stopped", id)
+					sp.logger.Infof("Worker %d is stopped", id)
 					return
 				}
 			}
 		}(i)
 	}
 
-	sp.logger.Printf("[INFO] SubPub was initialized with %d workers", countWorkers)
+	sp.logger.Infof("SubPub was initialized with %d workers", countWorkers)
 	return sp
 }
 
 // Subscribe
 func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, error) {
 	if subject == "" {
-		sp.logger.Printf("[ERROR] Subscribe failed: subject cannot be empty")
+		sp.logger.Errorf("Subscribe failed: subject cannot be empty")
 		return nil, errors.New("subject cannot be empty")
 	}
 	if cb == nil {
-		sp.logger.Printf("[ERROR] Subscribe failed: message handler cannot be nil")
+		sp.logger.Errorf("Subscribe failed: message handler cannot be nil")
 		return nil, errors.New("message Handler cannot be nil")
 	}
 
@@ -128,7 +129,7 @@ func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, er
 	defer sp.mu.Unlock()
 
 	if sp.closed {
-		sp.logger.Printf("[ERROR] Subscribe failed: subpub is closed")
+		sp.logger.Errorf("Subscribe failed: subpub is closed")
 		return nil, errors.New("subPub is closed")
 	}
 
@@ -146,7 +147,7 @@ func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, er
 
 	//Add subscription
 	sp.subscribers[subject][subscr] = struct{}{}
-	sp.logger.Printf("[INFO] Subscribed to subject %s", subject)
+	sp.logger.Infof("Subscribed to subject %s", subject)
 
 	return subscr, nil
 }
@@ -157,7 +158,7 @@ func (s *subscription) Unsubscribe() {
 	defer s.mu.Unlock()
 
 	if s.closed {
-		s.sp.logger.Printf("[INFO] Unsubscribe: Already unsubscribed from subject %s", s.subject)
+		s.sp.logger.Infof("Unsubscribe: Already unsubscribed from subject %s", s.subject)
 		return
 	}
 	s.closed = true
@@ -168,7 +169,7 @@ func (s *subscription) Unsubscribe() {
 
 	subs, exist := s.sp.subscribers[s.subject]
 	if !exist {
-		s.sp.logger.Printf("[WARN] Unsubscribe: Subject %s does not exist", s.subject)
+		s.sp.logger.Warnf("Unsubscribe: Subject %s does not exist", s.subject)
 		return
 	}
 
@@ -178,13 +179,13 @@ func (s *subscription) Unsubscribe() {
 	if len(subs) == 0 {
 		delete(s.sp.subscribers, s.subject)
 	}
-	s.sp.logger.Printf("[INFO] Unsubscribed from subject %s", s.subject)
+	s.sp.logger.Infof("Unsubscribed from subject %s", s.subject)
 }
 
 // Publish
 func (sp *subPub) Publish(subject string, msg interface{}) error {
 	if subject == "" {
-		sp.logger.Printf("[ERROR] Publish failed: subject cannot be empty")
+		sp.logger.Errorf("Publish failed: subject cannot be empty")
 		return errors.New("subject cannot be empty")
 	}
 
@@ -192,19 +193,19 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
 	if sp.closed {
-		sp.logger.Printf("[ERROR] Publish failed: subpub is closed")
+		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	}
 
 	// Send message to centralized queue
 	select {
 	case sp.msgCh <- message{subject: subject, data: msg}:
-		sp.logger.Printf("[INFO] Published message to subject %s", subject)
+		sp.logger.Infof("Published message to subject %s", subject)
 	case <-sp.stopCh:
-		sp.logger.Printf("[ERROR] Publish failed: subpub is closed")
+		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	default:
-		sp.logger.Printf("[WARN] Dropped message for subject %s: queue full", subject)
+		sp.logger.Warnf("Dropped message for subject %s: queue full", subject)
 	}
 
 	return nil
@@ -212,12 +213,12 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 
 // Close
 func (sp *subPub) Close(ctx context.Context) error {
-	sp.logger.Printf("[INFO] Closing SubPub")
+	sp.logger.Infof("Closing SubPub")
 
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	if sp.closed {
-		sp.logger.Printf("[INFO] SubPub already closed")
+		sp.logger.Infof("SubPub already closed")
 		//TODO поменять на ошибку
 		return nil
 	}
@@ -244,12 +245,23 @@ func (sp *subPub) Close(ctx context.Context) error {
 
 	select {
 	case <-done:
-		sp.logger.Printf("[INFO] SubPub closed successfully")
+		sp.logger.Infof("SubPub closed successfully")
 		return nil
 	case <-ctx.Done():
-		sp.logger.Printf("[ERROR] SubPub close failed: %v", ctx.Err())
+		sp.logger.Errorf("SubPub close failed: %v", ctx.Err())
 		return ctx.Err()
 	}
+}
+
+func initLogger() *logrus.Logger {
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.TextFormatter{
+		ForceColors:     true,
+		FullTimestamp:   true,
+		TimestampFormat: "2006/01/02 15:04:05",
+	})
+	logger.SetLevel(logrus.InfoLevel)
+	return logger
 }
 
 // Задание состоит из 2х частей.
