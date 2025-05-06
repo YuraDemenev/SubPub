@@ -3,7 +3,7 @@ package subpub
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"sync"
 )
 
@@ -34,6 +34,7 @@ type subPub struct {
 	//Bool flag for check is subPub close
 	closed bool
 	wg     sync.WaitGroup
+	logger *log.Logger
 }
 
 type subscription struct {
@@ -57,20 +58,20 @@ func NewSubPub() SubPub {
 		subscribers: make(map[string]map[*subscription]struct{}),
 		msgCh:       make(chan message, 1000),
 		stopCh:      make(chan struct{}),
+		logger:      log.New(log.Writer(), "subPub: ", log.LstdFlags),
 	}
 
 	//Create workers pool
-	numWorkers := 10
-	sp.wg.Add(numWorkers)
-	for i := 0; i < numWorkers; i++ {
+	countWorkers := 10
+	sp.wg.Add(countWorkers)
+	for i := 0; i < countWorkers; i++ {
 		go func(id int) {
 			defer sp.wg.Done()
 			for {
 				select {
 				case msg, ok := <-sp.msgCh:
 					if !ok {
-						//TODO add log
-						fmt.Errorf("tryed to read from closed chanel, func: NewSubPub")
+						sp.logger.Printf("[INFO] Worker %d: Message channel closed", id)
 						return
 					}
 					//For read map with sunjects
@@ -80,8 +81,7 @@ func NewSubPub() SubPub {
 					sp.mu.RUnlock()
 
 					if !exist {
-						//TODO add log
-						fmt.Errorf("message subject is not exist. subject:%s, func: NewSubPub", msg.subject)
+						sp.logger.Printf("[WARN] Worker %d: subject %s is not exist", id, msg.subject)
 						return
 					}
 
@@ -90,7 +90,7 @@ func NewSubPub() SubPub {
 						sub.mu.RLock()
 						if sub.closed {
 							sub.mu.RUnlock()
-							fmt.Errorf("sub is closed. sub:%s, func: NewSubPub", sub)
+							sp.logger.Printf("[INFO] Worker %d: Subscriber for subject %s is closed", id, msg.subject)
 							continue
 						}
 
@@ -101,22 +101,25 @@ func NewSubPub() SubPub {
 					}
 
 				case <-sp.stopCh:
-					//TODO add log
-					fmt.Println("worker %d is closed", id)
+					sp.logger.Printf("[INFO] Worker %d is stopped", id)
 					return
 				}
 			}
 		}(i)
 	}
+
+	sp.logger.Printf("[INFO] SubPub was initialized with %d workers", countWorkers)
 	return sp
 }
 
-// TODO почистить unlock
+// Subscribe
 func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, error) {
 	if subject == "" {
+		sp.logger.Printf("[ERROR] Subscribe failed: subject cannot be empty")
 		return nil, errors.New("subject cannot be empty")
 	}
 	if cb == nil {
+		sp.logger.Printf("[ERROR] Subscribe failed: message handler cannot be nil")
 		return nil, errors.New("message Handler cannot be nil")
 	}
 
@@ -125,6 +128,7 @@ func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, er
 	defer sp.mu.Unlock()
 
 	if sp.closed {
+		sp.logger.Printf("[ERROR] Subscribe failed: subpub is closed")
 		return nil, errors.New("subPub is closed")
 	}
 
@@ -142,6 +146,7 @@ func (sp *subPub) Subscribe(subject string, cb MessageHandler) (Subscription, er
 
 	//Add subscription
 	sp.subscribers[subject][subscr] = struct{}{}
+	sp.logger.Printf("[INFO] Subscribed to subject %s", subject)
 
 	return subscr, nil
 }
@@ -152,8 +157,10 @@ func (s *subscription) Unsubscribe() {
 	defer s.mu.Unlock()
 
 	if s.closed {
+		s.sp.logger.Printf("[INFO] Unsubscribe: Already unsubscribed from subject %s", s.subject)
 		return
 	}
+	s.closed = true
 
 	//Remove subscription from map subscribers
 	s.sp.mu.Lock()
@@ -161,8 +168,7 @@ func (s *subscription) Unsubscribe() {
 
 	subs, exist := s.sp.subscribers[s.subject]
 	if !exist {
-		//TODO add Log
-		fmt.Errorf("subject %s doesn`t exist, func Unsubsribe", s.subject)
+		s.sp.logger.Printf("[WARN] Unsubscribe: Subject %s does not exist", s.subject)
 		return
 	}
 
@@ -172,32 +178,33 @@ func (s *subscription) Unsubscribe() {
 	if len(subs) == 0 {
 		delete(s.sp.subscribers, s.subject)
 	}
-	s.closed = true
+	s.sp.logger.Printf("[INFO] Unsubscribed from subject %s", s.subject)
 }
 
 // Publish
 func (sp *subPub) Publish(subject string, msg interface{}) error {
 	if subject == "" {
+		sp.logger.Printf("[ERROR] Publish failed: subject cannot be empty")
 		return errors.New("subject cannot be empty")
 	}
 
 	//For work with map without data race
 	sp.mu.RLock()
-
+	defer sp.mu.RUnlock()
 	if sp.closed {
-		sp.mu.RUnlock()
+		sp.logger.Printf("[ERROR] Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	}
-	sp.mu.RUnlock()
 
 	// Send message to centralized queue
 	select {
 	case sp.msgCh <- message{subject: subject, data: msg}:
-		fmt.Println("Message successfully sent to the queue")
+		sp.logger.Printf("[INFO] Published message to subject %s", subject)
 	case <-sp.stopCh:
+		sp.logger.Printf("[ERROR] Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	default:
-		fmt.Printf("Dropped message for subject %s: queue is full\n", subject)
+		sp.logger.Printf("[WARN] Dropped message for subject %s: queue full", subject)
 	}
 
 	return nil
@@ -205,10 +212,12 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 
 // Close
 func (sp *subPub) Close(ctx context.Context) error {
-	sp.mu.Lock()
+	sp.logger.Printf("[INFO] Closing SubPub")
 
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
 	if sp.closed {
-		sp.mu.Unlock()
+		sp.logger.Printf("[INFO] SubPub already closed")
 		//TODO поменять на ошибку
 		return nil
 	}
@@ -225,8 +234,6 @@ func (sp *subPub) Close(ctx context.Context) error {
 		delete(sp.subscribers, subject)
 	}
 
-	sp.mu.Unlock()
-
 	// Chanel for send signal that sub pub closed
 	done := make(chan struct{})
 	//Start new goroutine for react to close channel or end with error
@@ -237,8 +244,10 @@ func (sp *subPub) Close(ctx context.Context) error {
 
 	select {
 	case <-done:
+		sp.logger.Printf("[INFO] SubPub closed successfully")
 		return nil
 	case <-ctx.Done():
+		sp.logger.Printf("[ERROR] SubPub close failed: %v", ctx.Err())
 		return ctx.Err()
 	}
 }
