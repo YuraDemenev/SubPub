@@ -20,7 +20,7 @@ func main() {
 
 	// Subscriber 2: Slow
 	_, err = sp.Subscribe("user_registered", func(msg interface{}) {
-		time.Sleep(5 * time.Second)
+		time.Sleep(1 * time.Second)
 		fmt.Println("Subscriber 2: Received:", msg)
 	})
 	if err != nil {
@@ -32,7 +32,7 @@ func main() {
 	sp.Publish("user_registered", "user456")
 
 	// Allow some time for processing
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(2 * time.Second)
 
 	// Close with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
