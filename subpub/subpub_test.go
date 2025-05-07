@@ -226,16 +226,36 @@ func TestPublish(t *testing.T) {
 	assert.Error(t, err, "Publish on closed SubPub should fail")
 }
 
-// func getLogs(t *testing.T) *logrus.Logger {
-// 	// Перехватываем логи
-// 	var logBuf bytes.Buffer
-// 	logger := logrus.New()
-// 	logger.SetOutput(&logBuf)
-// 	logger.SetFormatter(&logrus.TextFormatter{
-// 		ForceColors:     true,
-// 		FullTimestamp:   true,
-// 		TimestampFormat: "2006/01/02 15:04:05",
-// 	})
-// 	logger.SetLevel(logrus.InfoLevel)
-// 	return logger
-// }
+func TestClose(t *testing.T) {
+	sp := NewSubPub()
+	//Test timeout
+	spImpl := sp.(*subPub)
+
+	// simulate a slow Warker, Increase WaitGroup so that the worker does not end
+	spImpl.wg.Add(1)
+
+	// close with low timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+
+	err := sp.Close(ctx)
+	assert.Error(t, err, "Close should fail with timeout")
+	cancel()
+
+	spImpl.wg.Done()
+	spImpl.wg.Wait()
+
+	sp = NewSubPub()
+	// close
+	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err = sp.Close(ctx)
+	assert.NoError(t, err, "Close should succeed")
+
+	// Check subscribe doesn`t work
+	_, err = sp.Subscribe("test", func(msg interface{}) {})
+	assert.Error(t, err, "Subscribe after close should fail")
+
+	// Check Publish doesn`t work
+	err = sp.Publish("test", "test")
+	assert.Error(t, err, "Subscribe after close should fail")
+}

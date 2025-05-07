@@ -37,6 +37,9 @@ type subPub struct {
 	closed bool
 	wg     sync.WaitGroup
 	logger *logrus.Logger
+	//For undelivered messages
+	undelMessages []message
+	undelMu       sync.Mutex
 }
 
 type subscription struct {
@@ -211,7 +214,10 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	default:
-		sp.logger.Warnf("Dropped message for subject %s: queue full", subject)
+		sp.undelMu.Lock()
+		sp.undelMessages = append(sp.undelMessages, message{subject: subject, data: msg})
+		sp.undelMu.Unlock()
+		sp.logger.Warnf("message: %s added to undelivered message list", message{subject: subject, data: msg})
 	}
 
 	return nil
