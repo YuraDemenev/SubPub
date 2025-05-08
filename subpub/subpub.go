@@ -28,17 +28,18 @@ type SubPub interface {
 }
 
 type subPub struct {
-	mu sync.RWMutex
 	//For save multiply subsciptions for 1 topic and O(1) Delete
 	subscribers map[string]map[*subscription]struct{}
 	msgCh       chan message
 	stopCh      chan struct{}
 	//Bool flag for check is subPub close
+	mu     sync.RWMutex
 	closed bool
 	wg     sync.WaitGroup
 	logger *logrus.Logger
 	//For undelivered messages
 	undelMessages []message
+	undelSygnalCh chan struct{}
 	undelMu       sync.Mutex
 }
 
@@ -60,10 +61,12 @@ type message struct {
 func NewSubPub() SubPub {
 	//Initialize subPub
 	sp := &subPub{
-		subscribers: make(map[string]map[*subscription]struct{}),
-		msgCh:       make(chan message, 1000),
-		stopCh:      make(chan struct{}),
-		logger:      initLogger(),
+		subscribers:   make(map[string]map[*subscription]struct{}),
+		msgCh:         make(chan message, 1000),
+		stopCh:        make(chan struct{}),
+		logger:        initLogger(),
+		undelMessages: make([]message, 0),
+		undelSygnalCh: make(chan struct{}, 1),
 	}
 
 	//Create workers pool
@@ -74,6 +77,7 @@ func NewSubPub() SubPub {
 			defer sp.wg.Done()
 			for {
 				select {
+				// send message to subscribers
 				case msg, ok := <-sp.msgCh:
 					if !ok {
 						sp.logger.Infof("Worker %d: Message channel closed", id)
@@ -105,6 +109,39 @@ func NewSubPub() SubPub {
 						go handler(msg.data)
 					}
 
+				// send undelivered messages
+				case <-sp.undelSygnalCh:
+					sp.undelMu.Lock()
+					if len(sp.undelMessages) == 0 {
+						sp.undelMu.Unlock()
+						continue
+					}
+
+					check := true
+					for check && len(sp.undelMessages) > 0 {
+						msg := sp.undelMessages[0]
+						select {
+						case sp.msgCh <- msg:
+							sp.undelMessages = sp.undelMessages[1:]
+							sp.logger.Infof("Worker %d: Sent undelivered message to subject %s", id, msg.subject)
+
+						case <-sp.stopCh:
+							sp.logger.Warnf("Worker %d: Skipped undelivered message due to shutdown", id)
+							check = false
+							return
+						default:
+							//Если канал снова полон
+							select {
+							case sp.undelSygnalCh <- struct{}{}:
+							default:
+								sp.logger.Warnf("Worker %d: can`t send sygnal to undelSygnalCh because chan is full", id)
+							}
+							check = false
+						}
+					}
+					sp.undelMu.Unlock()
+
+				// stop workers
 				case <-sp.stopCh:
 					sp.logger.Infof("Worker %d is stopped", id)
 					return
@@ -200,13 +237,14 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 		return errors.New("subpub is closed")
 	}
 
+	//TODO подумать что первичнее Publisg создаёт тему или subscr
 	_, exist := sp.subscribers[subject]
 	if !exist {
 		sp.logger.Errorf("Publish failed: subpub doesn`t have subject: %s", subject)
 		return fmt.Errorf("Publish failed: subpub doesn`t have subject: %s", subject)
 	}
 
-	// Send message to centralized queue
+	// Send message to centralized chan
 	select {
 	case sp.msgCh <- message{subject: subject, data: msg}:
 		sp.logger.Infof("Published message to subject %s", subject)
@@ -214,10 +252,16 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	default:
+		sp.logger.Warnf("message: %s added to undelivered message list", message{subject: subject, data: msg})
 		sp.undelMu.Lock()
 		sp.undelMessages = append(sp.undelMessages, message{subject: subject, data: msg})
 		sp.undelMu.Unlock()
-		sp.logger.Warnf("message: %s added to undelivered message list", message{subject: subject, data: msg})
+		//Send sygnal
+		select {
+		case sp.undelSygnalCh <- struct{}{}:
+		default:
+			sp.logger.Warnf("Publish: can't send signal to undelSygnalCh — channel full")
+		}
 	}
 
 	return nil
