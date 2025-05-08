@@ -1,0 +1,6 @@
+grpc:
+  port: 8080
+logging:
+  level: "info"
+subpub:
+  message_channel_size: 1000

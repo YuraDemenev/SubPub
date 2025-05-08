@@ -1,5 +1,8 @@
-import "google/protobuf/empty.proto";
 syntax = "proto3";
+import "google/protobuf/empty.proto";
+
+option go_package = "github/yurademenev/protogen";
+
 service PubSub {
     // Подписка (сервер отправляет поток событий)
     rpc Subscribe(SubscribeRequest) returns (stream Event);
