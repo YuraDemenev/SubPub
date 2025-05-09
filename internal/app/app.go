@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// App нужен для реализации Dependency Injection, чтобы gRPC сервер, заботился только о gRPC.
 // App has main components
 type App struct {
 	Logger *logrus.Logger
