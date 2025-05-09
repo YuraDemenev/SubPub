@@ -42,7 +42,7 @@ func (s *Server) Run(port int) error {
 		return fmt.Errorf("Failed to listen: %s", err.Error())
 	}
 
-	//Chan for OC sygnal
+	// Chan for OC sygnal
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
@@ -52,19 +52,19 @@ func (s *Server) Run(port int) error {
 	// Run server
 	go func() {
 		s.logger.Infof("Starting gRPC server on %s", addr)
-		if err := s.grpcServer.Serve(lis); err != nil {
+		if err := s.grpcServer.Serve(lis); err != nil{
 			s.logger.WithError(err).Fatal("failed to serve")
 		}
 	}()
 
-	// Wait stop sygnal
+	// Wait for stop sygnal
 	<-stop
 	s.logger.Info("Received shutdon signal, initiating shutdown")
 	// Cancel context for stop subPub
 	cancel()
 
 	// Call close for subPub
-	if err := s.subPub.Close(ctx); err != nil {
+	if err := s.subPub.Close(ctx); err != nil  {
 		s.logger.WithError(err).Error("Failed to close subPub")
 	}
 
@@ -72,4 +72,9 @@ func (s *Server) Run(port int) error {
 	s.grpcServer.GracefulStop()
 	s.logger.Info("gRPC server stopped")
 	return nil
+}
+
+func (s *Server) Subscribe(req *protogen.SubscribeRequest, stream protogen.PubSub_SubscribeServer) error {
+	// s.logger.Infof()
+	sub, err := s.subPub.Subscribe(req.Key,req.)
 }
