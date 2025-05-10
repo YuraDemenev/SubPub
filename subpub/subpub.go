@@ -237,7 +237,6 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 		return errors.New("subpub is closed")
 	}
 
-	//TODO подумать что первичнее Publisg создаёт тему или subscr
 	_, exist := sp.subscribers[subject]
 	if !exist {
 		sp.logger.Errorf("Publish failed: subpub doesn`t have subject: %s", subject)
@@ -248,9 +247,11 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 	select {
 	case sp.msgCh <- Message{Subject: subject, Data: msg}:
 		sp.logger.Infof("Published message to subject %s", subject)
+
 	case <-sp.stopCh:
 		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
+
 	default:
 		sp.logger.Warnf("message: %s added to undelivered message list", Message{Subject: subject, Data: msg})
 		sp.undelMu.Lock()
@@ -275,7 +276,6 @@ func (sp *subPub) Close(ctx context.Context) error {
 	defer sp.mu.Unlock()
 	if sp.closed {
 		sp.logger.Infof("SubPub already closed")
-		//TODO поменять на ошибку
 		return nil
 	}
 	sp.closed = true

@@ -129,8 +129,6 @@ func (s *Server) Subscribe(req *protogen.SubscribeRequest, stream protogen.PubSu
 		case <-stream.Context().Done():
 			s.logger.WithField("key", req.Key).Info("Client desconnected")
 			return stream.Context().Err()
-			// default:
-			// 	s.logger.WithField("key", req.Key).Warn("Message dropped: channel full")
 		}
 	}
 }
