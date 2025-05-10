@@ -30,7 +30,7 @@ type SubPub interface {
 type subPub struct {
 	//For save multiply subsciptions for 1 topic and O(1) Delete
 	subscribers map[string]map[*subscription]struct{}
-	msgCh       chan message
+	msgCh       chan Message
 	stopCh      chan struct{}
 	//Bool flag for check is subPub close
 	mu     sync.RWMutex
@@ -38,7 +38,7 @@ type subPub struct {
 	wg     sync.WaitGroup
 	logger *logrus.Logger
 	//For undelivered messages
-	undelMessages []message
+	undelMessages []Message
 	undelSygnalCh chan struct{}
 	undelMu       sync.Mutex
 }
@@ -53,19 +53,19 @@ type subscription struct {
 	mu      sync.RWMutex
 }
 
-type message struct {
-	subject string
-	data    interface{}
+type Message struct {
+	Subject string
+	Data    interface{}
 }
 
 func NewSubPub() SubPub {
 	//Initialize subPub
 	sp := &subPub{
 		subscribers:   make(map[string]map[*subscription]struct{}),
-		msgCh:         make(chan message, 1000),
+		msgCh:         make(chan Message, 1000),
 		stopCh:        make(chan struct{}),
 		logger:        initLogger(),
-		undelMessages: make([]message, 0),
+		undelMessages: make([]Message, 0),
 		undelSygnalCh: make(chan struct{}, 1),
 	}
 
@@ -86,11 +86,11 @@ func NewSubPub() SubPub {
 					//For read map with sunjects
 					sp.mu.RLock()
 
-					subs, exist := sp.subscribers[msg.subject]
+					subs, exist := sp.subscribers[msg.Subject]
 					sp.mu.RUnlock()
 
 					if !exist {
-						sp.logger.Warnf("Worker %d: subject %s is not exist", id, msg.subject)
+						sp.logger.Warnf("Worker %d: subject %s is not exist", id, msg.Subject)
 						return
 					}
 
@@ -99,14 +99,14 @@ func NewSubPub() SubPub {
 						sub.mu.RLock()
 						if sub.closed {
 							sub.mu.RUnlock()
-							sp.logger.Infof("Worker %d: Subscriber for subject %s is closed", id, msg.subject)
+							sp.logger.Infof("Worker %d: Subscriber for subject %s is closed", id, msg.Subject)
 							continue
 						}
 
 						handler := sub.handler
 						sub.mu.RUnlock()
 						//Call handler in other goroutine for  don`t block this
-						go handler(msg.data)
+						go handler(msg.Data)
 					}
 
 				// send undelivered messages
@@ -123,7 +123,7 @@ func NewSubPub() SubPub {
 						select {
 						case sp.msgCh <- msg:
 							sp.undelMessages = sp.undelMessages[1:]
-							sp.logger.Infof("Worker %d: Sent undelivered message to subject %s", id, msg.subject)
+							sp.logger.Infof("Worker %d: Sent undelivered message to subject %s", id, msg.Subject)
 
 						case <-sp.stopCh:
 							sp.logger.Warnf("Worker %d: Skipped undelivered message due to shutdown", id)
@@ -246,15 +246,15 @@ func (sp *subPub) Publish(subject string, msg interface{}) error {
 
 	// Send message to centralized chan
 	select {
-	case sp.msgCh <- message{subject: subject, data: msg}:
+	case sp.msgCh <- Message{Subject: subject, Data: msg}:
 		sp.logger.Infof("Published message to subject %s", subject)
 	case <-sp.stopCh:
 		sp.logger.Errorf("Publish failed: subpub is closed")
 		return errors.New("subpub is closed")
 	default:
-		sp.logger.Warnf("message: %s added to undelivered message list", message{subject: subject, data: msg})
+		sp.logger.Warnf("message: %s added to undelivered message list", Message{Subject: subject, Data: msg})
 		sp.undelMu.Lock()
-		sp.undelMessages = append(sp.undelMessages, message{subject: subject, data: msg})
+		sp.undelMessages = append(sp.undelMessages, Message{Subject: subject, Data: msg})
 		sp.undelMu.Unlock()
 		//Send sygnal
 		select {
