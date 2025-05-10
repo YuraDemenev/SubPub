@@ -304,8 +304,11 @@ func (sp *subPub) Close(ctx context.Context) error {
 		sp.logger.Infof("SubPub closed successfully")
 		return nil
 	case <-ctx.Done():
-		sp.logger.Errorf("SubPub close failed: %v", ctx.Err())
-		return ctx.Err()
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			sp.logger.Errorf("SubPub close failed: %v", ctx.Err())
+			return ctx.Err()
+		}
+		return nil
 	}
 }
 

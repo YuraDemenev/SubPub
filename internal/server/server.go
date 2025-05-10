@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -49,9 +50,6 @@ func (s *Server) Run(port int, ctx context.Context) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	// Context with graceful shutdown
-	// ctx, cancel := context.WithCancel(context.Background())
-
 	// Run server
 	go func() {
 		s.logger.Infof("Starting gRPC server on %s", addr)
@@ -66,7 +64,7 @@ func (s *Server) Run(port int, ctx context.Context) error {
 	// Cancel context for stop subPub
 
 	// Call close for subPub
-	if err := s.subPub.Close(ctx); err != nil {
+	if err := s.subPub.Close(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.logger.WithError(err).Error("Failed to close subPub")
 	} else {
 		s.logger.Info("subPub closed successfully")
