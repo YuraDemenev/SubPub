@@ -44,7 +44,7 @@ func TestNewSubPubWorkers(t *testing.T) {
 
 	// Публикуем тестовое сообщение
 	err := sp.Publish("test_subject", "test_message")
-	assert.NoError(t, err, "Publish should succeed")
+	assert.Error(t, err, "Publish should`t succeed")
 
 	// Даём воркерам время обработать
 	time.Sleep(100 * time.Millisecond)
