@@ -156,20 +156,32 @@ func TestUnsubscribe(t *testing.T) {
 	assert.False(t, exist, "Subject test should not  exist")
 	assert.Len(t, subs, 0, "Subs should have size 0")
 
+	// close SubPub
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	assert.NoError(t, sp.Close(ctx), "Close should succeed")
+}
+
+func TestUnsubscribeNotExist(t *testing.T) {
+	sp := NewSubPub()
+
 	//Check Unsubscribe from not exist subject
-	sub, err = sp.Subscribe("test", func(msg interface{}) {})
+	sub, err := sp.Subscribe("test", func(msg interface{}) {})
 	assert.NoError(t, err, "Subscribe should succeed")
 
 	// modify subscription, for delete not exist subject
 	subImpl := sub.(*subscription)
-	subImpl.subject = "not exist subject"
+	spImpl := sp.(*subPub)
+	for k := range spImpl.subscribers {
+		delete(spImpl.subscribers, k)
+	}
 
 	//Unsubscribe, check panic (program should return without panic)
 	subImpl.Unsubscribe()
 	//Check test subject exist
 
-	_, exists = spImpl.subscribers["test"]
-	assert.True(t, exists, "Original subject test should still exist")
+	_, exists := spImpl.subscribers["test"]
+	assert.False(t, exists, "Subject test should be deleted")
 
 	// close SubPub
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)

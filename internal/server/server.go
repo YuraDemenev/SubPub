@@ -38,7 +38,7 @@ func New(app *app.App) *Server {
 }
 
 // Run gRPC server
-func (s *Server) Run(port int) error {
+func (s *Server) Run(port int, ctx context.Context) error {
 	addr := fmt.Sprintf(":%d", port)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -50,7 +50,7 @@ func (s *Server) Run(port int) error {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	// Context with graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
+	// ctx, cancel := context.WithCancel(context.Background())
 
 	// Run server
 	go func() {
@@ -64,7 +64,6 @@ func (s *Server) Run(port int) error {
 	<-stop
 	s.logger.Info("Received shutdon signal, initiating shutdown")
 	// Cancel context for stop subPub
-	cancel()
 
 	// Call close for subPub
 	if err := s.subPub.Close(ctx); err != nil {
@@ -80,29 +79,24 @@ func (s *Server) Run(port int) error {
 }
 
 func (s *Server) Subscribe(req *protogen.SubscribeRequest, stream protogen.PubSub_SubscribeServer) error {
-	s.logger.WithField("key", req.Key).Info("New subscriptiob request")
+	s.logger.WithField("key", req.Key).Info("New subscription request")
 
 	eventCh := make(chan *protogen.Event, 100)
 
 	// Create the callback
 	callback := func(msg interface{}) {
-		message, ok := msg.(subpub.Message)
+		message, ok := msg.(string)
 		if !ok {
 			s.logger.Warnf("received unknown message type message:%v", msg)
 			return
 		}
-		dataStr, ok := message.Data.(string)
-		if !ok {
-			s.logger.Warnf("received non-string data in message data:%v", message.Data)
-			return
-		}
 
-		event := &protogen.Event{Data: dataStr}
+		event := &protogen.Event{Data: message}
 		select {
 		case eventCh <- event:
 			s.logger.WithFields(logrus.Fields{
 				"key":  req.Key,
-				"data": dataStr,
+				"data": message,
 			}).Info("Event sent to channel")
 		case <-stream.Context().Done():
 			s.logger.WithField("key", req.Key).Info("Stream context done")
@@ -135,8 +129,8 @@ func (s *Server) Subscribe(req *protogen.SubscribeRequest, stream protogen.PubSu
 		case <-stream.Context().Done():
 			s.logger.WithField("key", req.Key).Info("Client desconnected")
 			return stream.Context().Err()
-		default:
-			s.logger.WithField("key", req.Key).Warn("Message dropped: channel full")
+			// default:
+			// 	s.logger.WithField("key", req.Key).Warn("Message dropped: channel full")
 		}
 	}
 }
@@ -164,7 +158,7 @@ func (s *Server) Publish(ctx context.Context, req *protogen.PublishRequest) (*em
 			"key":  req.Key,
 			"data": req.Data,
 		}).Info("Publish request cancelled")
-		return nil, status.Error(codes.Canceled, "Request cancelled")
+		return nil, status.Error(codes.Canceled, "request cancelled")
 
 	default:
 		// Publish message
@@ -172,8 +166,8 @@ func (s *Server) Publish(ctx context.Context, req *protogen.PublishRequest) (*em
 			s.logger.WithFields(logrus.Fields{
 				"key":  req.Key,
 				"data": req.Data,
-			}).WithError(err).Error("Failed to publish")
-			return nil, status.Errorf(codes.Internal, "Failed to publish: %s", err.Error())
+			}).WithError(err).Error("failed to publish")
+			return nil, status.Errorf(codes.Internal, "failed to publish: %s", err.Error())
 		}
 
 		// Publish success

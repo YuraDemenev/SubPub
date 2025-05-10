@@ -21,9 +21,9 @@ func NewApp(cfg *config.Config) *App {
 	//Error checked in config initialize
 	level, _ := logrus.ParseLevel(cfg.Logging.Level)
 	logger.SetLevel(level)
-	logger.SetFormatter(&logrus.TextFormatter{
-		ForceColors:     true,
-		FullTimestamp:   true,
+	logger.SetFormatter(&logrus.JSONFormatter{
+		// ForceColors:     true,
+		// FullTimestamp:   true,
 		TimestampFormat: "2006/01/02 15:04:05",
 	})
 
