@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/viper"
 )
 
+// TODO кол-во подписчиков
 type Config struct {
 	GRPC struct {
 		Port int `mapstructure:"port"`

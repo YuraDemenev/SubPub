@@ -158,29 +158,29 @@ func (s *Server) Publish(ctx context.Context, req *protogen.PublishRequest) (*em
 		"data": req.Data,
 	}).Info("Request for publish")
 
-	// Check context
-	if ctx.Err() != nil {
+	select {
+	case <-ctx.Done():
 		s.logger.WithFields(logrus.Fields{
 			"key":  req.Key,
 			"data": req.Data,
 		}).Info("Publish request cancelled")
 		return nil, status.Error(codes.Canceled, "Request cancelled")
-	}
 
-	// Publish message
-	if err := s.subPub.Publish(req.Key, req.Data); err != nil {
+	default:
+		// Publish message
+		if err := s.subPub.Publish(req.Key, req.Data); err != nil {
+			s.logger.WithFields(logrus.Fields{
+				"key":  req.Key,
+				"data": req.Data,
+			}).WithError(err).Error("Failed to publish")
+			return nil, status.Errorf(codes.Internal, "Failed to publish: %s", err.Error())
+		}
+
+		// Publish success
 		s.logger.WithFields(logrus.Fields{
 			"key":  req.Key,
 			"data": req.Data,
-		}).WithError(err).Error("Failed to publish")
-		return nil, status.Errorf(codes.Internal, "Failed to publish: %s", err.Error())
+		}).Info("Message published successfully")
+		return &emptypb.Empty{}, nil
 	}
-
-	// Publish success
-	s.logger.WithFields(logrus.Fields{
-		"key":  req.Key,
-		"data": req.Data,
-	}).Info("Message published successfully")
-	return &emptypb.Empty{}, nil
-
 }
