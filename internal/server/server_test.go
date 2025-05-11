@@ -3,14 +3,20 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"subpun/internal/app"
+	"subpun/internal/config"
 	"subpun/proto/protogen"
 	"subpun/subpub"
 	"testing"
+	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -139,117 +145,83 @@ func TestPublish(t *testing.T) {
 
 }
 
-// func main() {
-// 	cfg, err := config.LoadConfig()
-// 	if err != nil {
-// 		log.Fatalf("Failed to load config: %v", err)
-// 	}
+func TestSubscribe(t *testing.T) {
+	cfg, err := config.LoadConfig()
+	assert.NoError(t, err, "config should load successfully")
 
-// 	app := app.NewApp(cfg)
-// 	//Log info
-// 	app.Logger.Info("Application started")
-// 	app.Logger.Infof("gRPC Port: %d", cfg.GRPC.Port)
-// 	app.Logger.Infof("Logging Level: %s", cfg.Logging.Level)
+	app := app.NewApp(cfg)
+	srv := New(app)
 
-// 	srv := server.New(app)
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-// 	// Create context for graceful shutdown
-// 	ctx, cancel := context.WithCancel(context.Background())
-// 	defer cancel()
+	// Run server in a goroutine
+	go func() {
+		err := srv.Run(cfg.GRPC.Port, ctx)
+		if err != nil && err != context.Canceled {
+			assert.NoError(t, err, "server should start")
+		}
+	}()
 
-// 	// Handle OS signals for graceful shutdown
-// 	sigChan := make(chan os.Signal, 1)
-// 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-// 	// Run server in a goroutine
-// 	go func() {
-// 		if err := srv.Run(cfg.GRPC.Port, ctx); err != nil && err != context.Canceled {
-// 			app.Logger.Errorf("Server failed: %v", err)
-// 		}
-// 	}()
+	// Wait for server to start
+	time.Sleep(500 * time.Millisecond)
+	addr := fmt.Sprintf(":%d", cfg.GRPC.Port)
+	// Create gRPC client
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	assert.NoError(t, err, "client should start")
+	defer conn.Close()
 
-// 	// Wait for server to start
-// 	time.Sleep(500 * time.Millisecond)
-// 	addr := fmt.Sprintf(":%d", cfg.GRPC.Port)
-// 	// Create gRPC client
-// 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-// 	if err != nil {
-// 		app.Logger.Errorf("Failed to dial server: %v", err)
-// 		log.Fatalf("Failed to dial server: %v", err)
-// 	}
-// 	defer conn.Close()
+	client := protogen.NewPubSubClient(conn)
 
-// 	client := protogen.NewPubSubClient(conn)
-// 	app.Logger.Info("gRPC client connected")
+	// Subscribe to topic
+	received := make(chan string, 1)
+	subscribeErr := make(chan error, 1)
 
-// 	// Subscribe to topic
-// 	received := make(chan string, 1)
-// 	subscribeErr := make(chan error, 1)
+	stream, err := client.Subscribe(ctx, &protogen.SubscribeRequest{Key: "test"})
+	assert.NoError(t, err, "client should subscribe")
 
-// 	stream, err := client.Subscribe(ctx, &protogen.SubscribeRequest{Key: "test"})
-// 	if err != nil {
-// 		return
-// 	}
-// 	app.Logger.Info("Subscribed to topic: test")
+	go func() {
+		for {
+			event, err := stream.Recv()
+			if err != nil {
+				subscribeErr <- fmt.Errorf("subscribe failed: %v", err)
+				return
+			}
+			received <- event.Data
+		}
+	}()
 
-// 	go func() {
-// 		for {
-// 			event, err := stream.Recv()
-// 			if err != nil {
-// 				subscribeErr <- fmt.Errorf("subscribe failed: %v", err)
-// 				return
-// 			}
-// 			received <- event.Data
-// 		}
-// 	}()
+	// Check for subscription errors
+	select {
+	case err := <-subscribeErr:
+		assert.NoError(t, err, "subscribe shouldn`t get errors")
+		return
+	default:
+	}
 
-// 	// Check for subscription errors
-// 	select {
-// 	case err := <-subscribeErr:
-// 		app.Logger.Errorf("Subscription error: %v", err)
-// 		log.Fatalf("Subscription error: %v", err)
-// 	default:
-// 	}
+	// Publish a message
+	_, err = client.Publish(ctx, &protogen.PublishRequest{Key: "test", Data: "hello"})
+	assert.NoError(t, err, "publish shouldn`t fail")
 
-// 	// Publish a message
-// 	_, err = client.Publish(ctx, &protogen.PublishRequest{Key: "test", Data: "hello"})
-// 	if err != nil {
-// 		app.Logger.Errorf("Publish failed: %v", err)
-// 		log.Fatalf("Publish failed: %v", err)
-// 	}
-// 	app.Logger.Info("Published message: hello")
-
-// 	// Main loop for handling events
-// 	for {
-// 		select {
-
-// 		case err := <-subscribeErr:
-// 			app.Logger.Errorf("Subscription error: %v", err)
-// 			log.Fatalf("Subscription error: %v", err)
-
-// 		case msg := <-received:
-// 			app.Logger.Infof("Received message: %s", msg)
-// 			if msg != "hello" {
-// 				app.Logger.Errorf("Expected message 'hello', got '%s'", msg)
-// 				log.Fatalf("Expected message 'hello', got '%s'", msg)
-// 			}
-// 			app.Logger.Info("Message verified, waiting for shutdown signal...")
-// 			// Continue to wait for shutdown signal
-
-// 		case sig := <-sigChan:
-// 			app.Logger.Infof("Received signal: %v, stopping server...", sig)
-// 			cancel()
-// 			time.Sleep(1 * time.Second)
-// 			app.Logger.Info("Server stopped")
-// 			return
-
-// 		default:
-// 			// Non-blocking check for stream message
-// 			event, err := stream.Recv()
-// 			if err != nil {
-// 				subscribeErr <- fmt.Errorf("stream receive failed: %v", err)
-// 				continue
-// 			}
-// 			received <- event.Data
-// 		}
-// 	}
-// }
+	// Main loop for handling events
+	for {
+		select {
+		case err := <-subscribeErr:
+			assert.NoError(t, err, "subscribe shouldn`t get errors")
+			return
+		case msg := <-received:
+			app.Logger.Infof("Received message: %s", msg)
+			assert.Equal(t, "hello", msg, "Expected message 'hello'")
+			return
+		default:
+			// Non-blocking check for stream message
+			event, err := stream.Recv()
+			if err != nil {
+				subscribeErr <- fmt.Errorf("stream receive failed: %v", err)
+				continue
+			}
+			received <- event.Data
+		}
+	}
+}
